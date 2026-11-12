@@ -4,132 +4,110 @@
 
 | Requirement | How to verify |
 |---|---|
-| Azure CLI, logged in | `az account show` |
+| Azure CLI, logged in | `az account show -o table` |
 | VS Professional subscription selected | `az account show --query name` |
 | **Spending limit enabled** | Portal → Cost Management → Budgets |
 | Azure OpenAI resource with `gpt-4o-mini` and `text-embedding-3-small` | `az cognitiveservices account deployment list -n <name> -g <rg>` |
-| Docker (for local image builds) | `docker version` |
-| Node 22 (for local UI builds) | `node -v` |
+| Python 3.11+ with the package installed | `python -c "import itops_rag"` |
 
 > **Before you start:** confirm the subscription spending limit is enabled. This
 > project targets **≤ $20/month** and never upgrades a free tier.
 
-## 1. Verify Azure OpenAI quota
+## Windows PowerShell (recommended)
 
-```bash
-az cognitiveservices account deployment list \
-  --name <your-openai-resource> \
-  --resource-group <your-rg> \
-  --query "[].{name:name, model:properties.model.name, capacity:sku.capacity}" \
-  --output table
+The deployment scripts are provided in PowerShell because that is where the
+Azure session is authenticated.
+
+```powershell
+cd C:\ProjPlayGround\ICS_DL\Caproj\itopsrag
+
+# Confirm the session
+az account show -o table
+
+# Deploy
+.\infra\deploy.ps1 `
+    -AzureOpenAiEndpoint "https://<your-resource>.openai.azure.com" `
+    -OpenAiResourceName "<your-openai-resource>" `
+    -OpenAiResourceGroup "<your-openai-rg>" `
+    -ApiKey "<a-strong-random-key>"
 ```
 
-You need both `gpt-4o-mini` and `text-embedding-3-small`. If either is missing,
-create the deployment in the portal or report the blocker — do not change the
-architecture.
+The script verifies the session, checks Azure OpenAI deployments and Free AI
+Search availability, deploys the Bicep template, grants the app identity
+`Cognitive Services OpenAI User`, and prints the app URL.
 
-## 2. Verify Azure AI Search Free availability
+Use `-WhatIf` to preview the commands without changing anything, or
+`-SkipChecks` to bypass the preflight checks.
 
-Only **one** Free search service is allowed per subscription.
+Then index the corpus:
 
-```bash
-az search service list --query "[?sku.name=='free'].name" --output tsv
+```powershell
+.\infra\index.ps1 `
+    -SearchEndpoint "https://srch-itops-<suffix>.search.windows.net" `
+    -OpenAiEndpoint "https://<your-resource>.openai.azure.com" `
+    -DataDir "C:\ProjPlayGround\ICS_DL\Caproj\agent-eval-part-i-grounded-rag-benchmark" `
+    -Recreate
 ```
 
-If a Free service already exists, either reuse it or delete it first.
+Expected: `Indexed 3600 chunks into 'itops-chunks'.`
 
-## 3. Build and push the image
-
-CI builds and pushes to GHCR on every push to `main`:
-
-```
-ghcr.io/thebestcdr/itopsrag:<sha>
-ghcr.io/thebestcdr/itopsrag:latest
-```
-
-To build locally:
-
-```bash
-docker build -t itopsrag:local .
-docker run --rm -p 8000:8000 \
-  -e DATA_DIR=/app/data \
-  -v "$PWD/agent-eval-part-i-grounded-rag-benchmark:/app/data:ro" \
-  itopsrag:local
-```
-
-## 4. Provision infrastructure
+## Bash (Linux / macOS / WSL)
 
 ```bash
 az login
 az account set --subscription "<VS Professional subscription id>"
 
 export AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com
-export API_KEY="$(openssl rand -hex 24)"     # protects /ask and /search
-export LANGSMITH_API_KEY=""                  # optional
+export API_KEY="$(openssl rand -hex 24)"
 
 bash infra/deploy.sh
-```
-
-The script prints the app URL and the search endpoint. It creates:
-
-- Azure AI Search (**Free**)
-- Container Apps environment + app (`minReplicas=0`, `maxReplicas=2`)
-- Log Analytics workspace with a **1 GB/day cap**
-- Application Insights
-- Budget alerts at $25 and $40
-- A system-assigned managed identity with `Search Index Data Reader`
-
-## 5. Grant the app access to Azure OpenAI
-
-The container app's managed identity needs the `Cognitive Services OpenAI User`
-role on the Azure OpenAI resource:
-
-```bash
-PRINCIPAL_ID=$(az deployment group show -g rg-itops-rag -n main \
-  --query properties.outputs.appPrincipalId.value -o tsv)
-
-az role assignment create \
-  --assignee "$PRINCIPAL_ID" \
-  --role "Cognitive Services OpenAI User" \
-  --scope $(az cognitiveservices account show -n <openai-resource> -g <rg> --query id -o tsv)
-```
-
-## 6. Index the corpus
-
-The corpus is not in the image (it is never committed). Run the indexer from a
-machine that has the data and Azure credentials:
-
-```bash
-export DATA_DIR=/path/to/agent-eval-part-i-grounded-rag-benchmark
-export AZURE_SEARCH_ENDPOINT=https://srch-itops-<suffix>.search.windows.net
-export AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com
-export AZURE_EMBEDDING_DIMENSIONS=512
-
 python -m itops_rag.index --recreate
 ```
 
-Expected output: `Indexed 3600 chunks into 'itops-chunks'.`
+## Container image
 
-Re-running without `--recreate` is safe and idempotent.
+CI publishes the image to GHCR on every branch push:
 
-## 7. Verify
+```
+ghcr.io/thebestcdr/itopsrag:<full-sha>
+ghcr.io/thebestcdr/itopsrag:latest
+```
 
-```bash
-URL=$(az deployment group show -g rg-itops-rag -n main \
-  --query properties.outputs.appUrl.value -o tsv)
+The package is **public**, so Container Apps pulls it anonymously. If you make
+it private, pass `-RegistryUsername` and `-RegistryPassword` (a PAT with
+`read:packages`) to `deploy.ps1`; the Bicep template then attaches registry
+credentials.
 
-curl -s "$URL/healthz"
-curl -s "$URL/readyz"
+## What gets created
 
-curl -s -X POST "$URL/ask" \
-  -H 'Content-Type: application/json' \
-  -H "X-API-Key: $API_KEY" \
-  -d '{"question":"What is the acknowledge and mitigation target for Severity 4 incidents?"}'
+| Resource | Name | Tier |
+|---|---|---|
+| Resource group | `rg-itops-rag` | — |
+| Azure AI Search | `srch-itops-<suffix>` | **Free** (50 MB) |
+| Container Apps environment | `cae-itops-<suffix>` | Consumption |
+| Container App | `ca-itops-<suffix>` | min=0, max=2 |
+| Log Analytics | `log-itops-<suffix>` | 1 GB/day cap |
+| Application Insights | `appi-itops-<suffix>` | — |
+| Budget | `budget-itops-<suffix>` | alerts at $25 / $40 |
+
+## Verify
+
+```powershell
+$url = az deployment group show -g rg-itops-rag -n main `
+    --query properties.outputs.appUrl.value -o tsv
+
+curl.exe "$url/healthz"
+curl.exe "$url/readyz"
+
+curl.exe -X POST "$url/ask" `
+    -H "Content-Type: application/json" `
+    -H "X-API-Key: <your-api-key>" `
+    -d '{\"question\":\"What is the acknowledge and mitigation target for Severity 4 incidents?\"}'
 ```
 
 The first request after idle triggers a cold start (allow ~10–20 s).
 
-## 8. CI/CD with OIDC
+## CI/CD with OIDC
 
 The deploy workflow uses federated credentials, not stored secrets.
 
@@ -169,7 +147,7 @@ az role assignment create --assignee "$APP_ID" --role Contributor \
 | `APP_API_KEY` | the API key you set |
 | `LANGSMITH_API_KEY` | optional |
 
-## 9. Monitoring
+## Monitoring
 
 - **Application Insights** — request rates, latency, failures, dependency calls.
 - **Log Analytics** — structured JSON logs, queryable by `request_id`:
@@ -187,14 +165,13 @@ traces
 - **LangSmith** — set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` to trace
   retrieval and generation spans.
 
-## 10. Teardown
+## Teardown
 
-```bash
-bash infra/teardown.sh
+```powershell
+az group delete --name rg-itops-rag --yes --no-wait
 ```
 
-Deletes the resource group and everything in it. Nothing outside the group is
-touched.
+Or on bash: `bash infra/teardown.sh`
 
 ## Troubleshooting
 
@@ -205,4 +182,5 @@ touched.
 | `/ask` returns 401 | `API_KEY` set but header missing | Send `X-API-Key` |
 | `/ask` returns 429 | Rate limit or daily cap | Wait, or raise the limits |
 | Answers always refuse | Index empty or embeddings mismatched | Re-run the indexer; check dimensions |
+| Container fails to start | Image pull failure | Make the GHCR package public, or pass registry credentials |
 | Cold start > 30 s | Image too large | Confirm torch is not installed in the image |

@@ -144,7 +144,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'http'
         allowInsecure: false
       }
-      registries: [
+      // Only attach registry credentials when supplied. The GHCR package for
+      // this project is public, so anonymous pulls work without them.
+      registries: empty(registryUsername) ? null : [
         {
           server: 'ghcr.io'
           username: registryUsername
