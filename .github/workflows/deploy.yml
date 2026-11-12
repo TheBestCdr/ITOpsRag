@@ -49,6 +49,8 @@ jobs:
           else
             echo "tag=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
           fi
+          # GHCR requires a lowercase repository path.
+          echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Deploy infrastructure and app
         uses: azure/arm-deploy@v2
@@ -57,7 +59,7 @@ jobs:
           template: infra/main.bicep
           parameters: >-
             nameSuffix=${{ secrets.NAME_SUFFIX }}
-            containerImage=ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}
+            containerImage=${{ steps.tag.outputs.image }}:${{ steps.tag.outputs.tag }}
             azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT }}
             apiKey=${{ secrets.APP_API_KEY }}
             langsmithApiKey=${{ secrets.LANGSMITH_API_KEY }}

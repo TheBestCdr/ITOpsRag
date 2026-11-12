@@ -2,7 +2,7 @@
 
 from .config import Settings, get_settings
 from .corpus import Corpus, build_eval_set, load_corpus
-from .generation import NO_EVIDENCE, Answer, ExtractiveGenerator
+from .generation import Answer, ExtractiveGenerator, NO_EVIDENCE
 from .retrieval import LocalRetriever, RetrievedChunk
 from .service import AskResult, RagService
 
