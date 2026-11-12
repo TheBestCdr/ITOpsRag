@@ -40,6 +40,13 @@ param apiKey string = ''
 @secure()
 param langsmithApiKey string = ''
 
+@description('GHCR username (GitHub account) for pulling the private image.')
+param registryUsername string = ''
+
+@description('GHCR personal access token with read:packages scope.')
+@secure()
+param registryPassword string = ''
+
 @description('Daily Log Analytics ingestion cap in GB.')
 param logDailyCapGb int = 1
 
@@ -137,6 +144,13 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'http'
         allowInsecure: false
       }
+      registries: [
+        {
+          server: 'ghcr.io'
+          username: registryUsername
+          passwordSecretRef: 'registry-password'
+        }
+      ]
       secrets: [
         {
           name: 'api-key'
@@ -145,6 +159,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'langsmith-api-key'
           value: langsmithApiKey
+        }
+        {
+          name: 'registry-password'
+          value: registryPassword
         }
       ]
     }
