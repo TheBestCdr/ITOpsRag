@@ -1,0 +1,56 @@
+# ---- Kaggle data and generated artifacts (never commit) ----
+agent-eval-part-i-grounded-rag-benchmark/
+data/
+*.csv
+*.npy
+*.npz
+*.keras
+!requirements*.txt
+submission.csv
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ---- Node / React ----
+node_modules/
+web/dist/
+web/.vite/
+npm-debug.log*
+yarn-error.log*
+
+# ---- Local env and secrets ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ---- Evaluation outputs (regenerate, do not commit) ----
+eval/reports/*.json
+eval/reports/*.csv
+!eval/reports/.gitkeep
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- Build artifacts ----
+build/
+*.egg-info/

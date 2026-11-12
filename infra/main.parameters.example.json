@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "nameSuffix": {
+      "value": "REPLACE_ME"
+    },
+    "containerImage": {
+      "value": "ghcr.io/thebestcdr/itopsrag:latest"
+    },
+    "azureOpenAiEndpoint": {
+      "value": "https://REPLACE_ME.openai.azure.com"
+    },
+    "chatDeployment": {
+      "value": "gpt-4o-mini"
+    },
+    "embeddingDeployment": {
+      "value": "text-embedding-3-small"
+    },
+    "embeddingDimensions": {
+      "value": 512
+    },
+    "apiKey": {
+      "value": ""
+    },
+    "langsmithApiKey": {
+      "value": ""
+    },
+    "logDailyCapGb": {
+      "value": 1
+    }
+  }
+}

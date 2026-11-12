@@ -1,0 +1,98 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (defaults to the current commit SHA)"
+        required: false
+        type: string
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write # required for Azure OIDC federation
+  packages: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Azure Container Apps
+    runs-on: ubuntu-latest
+    # Only deploy after a successful CI run on main, or on manual dispatch.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [[ -n "${{ inputs.image_tag }}" ]]; then
+            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy infrastructure and app
+        uses: azure/arm-deploy@v2
+        with:
+          resourceGroupName: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: >-
+            nameSuffix=${{ secrets.NAME_SUFFIX }}
+            containerImage=ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}
+            azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT }}
+            apiKey=${{ secrets.APP_API_KEY }}
+            langsmithApiKey=${{ secrets.LANGSMITH_API_KEY }}
+          failOnStdErr: false
+
+      - name: Smoke test the deployed app
+        run: |
+          URL=$(az deployment group show \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --name main \
+            --query properties.outputs.appUrl.value -o tsv)
+
+          echo "Deployed URL: $URL"
+
+          # The app scales to zero, so allow time for the first cold start.
+          for attempt in $(seq 1 20); do
+            if curl -fsS --max-time 10 "$URL/healthz" > /dev/null; then
+              echo "healthz OK on attempt $attempt"
+              break
+            fi
+            echo "waiting for cold start ($attempt/20)…"
+            sleep 10
+          done
+
+          curl -fsS --max-time 15 "$URL/healthz"
+          curl -fsS --max-time 30 "$URL/readyz"
+
+          # A grounded answer must come back with at least one citation.
+          RESPONSE=$(curl -fsS --max-time 60 -X POST "$URL/ask" \
+            -H 'Content-Type: application/json' \
+            -H "X-API-Key: ${{ secrets.APP_API_KEY }}" \
+            -d '{"question":"What is the acknowledge and mitigation target for Severity 4 incidents?"}')
+
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q '"grounded": *true' || { echo "::error::Answer was not grounded"; exit 1; }
+          echo "$RESPONSE" | grep -q '"citations": *\[ *"' || { echo "::error::No citations returned"; exit 1; }
+
+          echo "Smoke test passed."
