@@ -117,20 +117,13 @@ button:disabled {
   color: var(--muted);
 }
 
-select,
-.controls input {
+select {
   padding: 6px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
   font: inherit;
-}
-
-.controls input {
-  flex: 1;
-  min-width: 0;
-  max-width: 340px;
 }
 
 .card {

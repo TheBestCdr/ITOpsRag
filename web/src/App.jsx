@@ -20,31 +20,14 @@ export default function App() {
   const [error, setError] = useState(null);
   const [health, setHealth] = useState(null);
   const [feedbackSent, setFeedbackSent] = useState(false);
-  // The API requires X-API-Key when API_KEY is configured on the server.
-  // Keep it in sessionStorage so it survives a reload but not a new tab.
-  const [apiKey, setApiKey] = useState(
-    () => sessionStorage.getItem("itops_api_key") || "",
-  );
 
-  function updateApiKey(value) {
-    setApiKey(value);
-    if (value) sessionStorage.setItem("itops_api_key", value);
-    else sessionStorage.removeItem("itops_api_key");
-  }
-
-  // /readyz is unauthenticated, so the status bar works without a key.
+  // Show corpus size and backend so the user can see what is indexed.
   useEffect(() => {
     fetch("/readyz")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then(setHealth)
       .catch(() => setHealth(null));
   }, []);
-
-  function authHeaders() {
-    const headers = { "Content-Type": "application/json" };
-    if (apiKey.trim()) headers["X-API-Key"] = apiKey.trim();
-    return headers;
-  }
 
   async function ask(event) {
     event.preventDefault();
@@ -58,15 +41,9 @@ export default function App() {
     try {
       const response = await fetch("/ask", {
         method: "POST",
-        headers: authHeaders(),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, method, k: 5 }),
       });
-
-      if (response.status === 401) {
-        throw new Error(
-          "Invalid or missing X-API-Key. Enter the API key above and try again.",
-        );
-      }
 
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));
@@ -86,7 +63,7 @@ export default function App() {
     try {
       await fetch("/feedback", {
         method: "POST",
-        headers: authHeaders(),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: result.question,
           answer: result.answer,
@@ -114,19 +91,6 @@ export default function App() {
         {health
           ? `${health.documents.toLocaleString()} documents · ${health.chunks.toLocaleString()} chunks · ${health.retriever_backend} retrieval`
           : "Knowledge base unavailable"}
-      </div>
-
-      <div className="controls">
-        <label htmlFor="apiKey">API key</label>
-        <input
-          id="apiKey"
-          type="password"
-          value={apiKey}
-          onChange={(e) => updateApiKey(e.target.value)}
-          placeholder="X-API-Key (required when the server sets API_KEY)"
-          autoComplete="off"
-          aria-label="API key"
-        />
       </div>
 
       <form onSubmit={ask}>
