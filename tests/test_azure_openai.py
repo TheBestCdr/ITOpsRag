@@ -41,7 +41,9 @@ class FakeClient:
 
 
 def _settings() -> Settings:
-    return Settings(min_similarity=0.35, max_output_tokens=200)
+    # Pin the deployment so ambient AZURE_CHAT_DEPLOYMENT cannot change which
+    # parameter set the generator uses.
+    return Settings(min_similarity=0.35, max_output_tokens=200, azure_chat_deployment="gpt-4o-mini")
 
 
 def test_generator_maps_markers_to_chunk_ids():

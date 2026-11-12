@@ -28,6 +28,7 @@ param(
     [string]$IndexName = "itops-chunks",
     [string]$EmbeddingDeployment = "text-embedding-3-small",
     [int]$EmbeddingDimensions = 512,
+    [string]$ResourceGroup = "rg-itops-rag",
     [switch]$Recreate
 )
 
@@ -80,6 +81,22 @@ Write-Host "    AZURE_SEARCH_INDEX      = $IndexName"
 Write-Host "    AZURE_OPENAI_ENDPOINT   = $OpenAiEndpoint"
 Write-Host "    AZURE_EMBEDDING_DIMENSIONS = $EmbeddingDimensions"
 
+# The indexer writes to the search index, which requires the data-plane
+# "Search Index Data Contributor" role. A developer's az login usually lacks it,
+# so use the service admin key unless one was supplied explicitly.
+if (-not $env:AZURE_SEARCH_API_KEY) {
+    $serviceName = ([Uri]$SearchEndpoint).Host.Split('.')[0]
+    $adminKey = az search admin-key show --service-name $serviceName `
+        --resource-group $ResourceGroup --query primaryKey -o tsv 2>$null
+    if ($adminKey) {
+        $env:AZURE_SEARCH_API_KEY = $adminKey
+        Write-Host "    AZURE_SEARCH_API_KEY    = (admin key for $serviceName)"
+    }
+    else {
+        Write-Warning "Could not read the search admin key; falling back to az login credentials."
+    }
+}
+
 # ---------------------------------------------------------------- run
 
 Write-Step "Indexing the corpus"
@@ -90,7 +107,19 @@ if ($Recreate) {
     Write-Host "    Recreating the index schema first."
 }
 
-python @indexArgs
+# Prefer the project virtualenv so the package resolves even when the venv is
+# not activated in this shell.
+$venvPython = Join-Path (Split-Path -Parent $PSScriptRoot) ".venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
+    $pythonExe = $venvPython
+    Write-Host "    Using interpreter: $pythonExe"
+}
+else {
+    $pythonExe = "python"
+    Write-Host "    Using interpreter: python (from PATH)"
+}
+
+& $pythonExe @indexArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Indexing failed. Check the error above."
 }

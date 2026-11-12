@@ -24,7 +24,7 @@ param containerImage string
 param azureOpenAiEndpoint string
 
 @description('Azure OpenAI chat deployment name.')
-param chatDeployment string = 'gpt-4o-mini'
+param chatDeployment string = 'gpt-5-mini'
 
 @description('Azure OpenAI embedding deployment name.')
 param embeddingDeployment string = 'text-embedding-3-small'
@@ -60,6 +60,18 @@ param tags object = {
   owner: 'capstone'
 }
 
+// Container Apps rejects empty secret values, so only emit a secret (and its
+// env reference) when a real value was supplied.
+var hasApiKey = !empty(apiKey)
+var hasLangsmith = !empty(langsmithApiKey)
+var hasRegistry = !empty(registryUsername) && !empty(registryPassword)
+
+var appSecrets = concat(
+  hasApiKey ? [{ name: 'api-key', value: apiKey }] : [],
+  hasLangsmith ? [{ name: 'langsmith-api-key', value: langsmithApiKey }] : [],
+  hasRegistry ? [{ name: 'registry-password', value: registryPassword }] : []
+)
+
 // ---------------------------------------------------------------- search
 
 // Free tier: 50 MB storage, 3 indexes, one free service per subscription.
@@ -77,6 +89,14 @@ resource search 'Microsoft.Search/searchServices@2024-06-01-preview' = {
     hostingMode: 'default'
     publicNetworkAccess: 'enabled'
     disableLocalAuth: false
+    // The app authenticates with its managed identity, so Entra ID (AAD) auth
+    // must be enabled. Without this the service is apiKeyOnly and the app's
+    // DefaultAzureCredential is rejected with 403 Forbidden.
+    authOptions: {
+      aadOrApiKey: {
+        aadAuthFailureMode: 'http401WithBearerChallenge'
+      }
+    }
   }
 }
 
@@ -146,27 +166,14 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       }
       // Only attach registry credentials when supplied. The GHCR package for
       // this project is public, so anonymous pulls work without them.
-      registries: empty(registryUsername) ? null : [
+      registries: hasRegistry ? [
         {
           server: 'ghcr.io'
           username: registryUsername
           passwordSecretRef: 'registry-password'
         }
-      ]
-      secrets: [
-        {
-          name: 'api-key'
-          value: apiKey
-        }
-        {
-          name: 'langsmith-api-key'
-          value: langsmithApiKey
-        }
-        {
-          name: 'registry-password'
-          value: registryPassword
-        }
-      ]
+      ] : null
+      secrets: appSecrets
     }
     template: {
       // Scale to zero: no cost when idle.
@@ -192,28 +199,30 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
-          env: [
-            { name: 'ENVIRONMENT', value: 'azure' }
-            { name: 'RETRIEVER_BACKEND', value: 'azure' }
-            { name: 'EMBEDDING_BACKEND', value: 'azure' }
-            { name: 'GENERATOR_BACKEND', value: 'azure_openai' }
-            { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
-            { name: 'AZURE_CHAT_DEPLOYMENT', value: chatDeployment }
-            { name: 'AZURE_EMBEDDING_DEPLOYMENT', value: embeddingDeployment }
-            { name: 'AZURE_EMBEDDING_DIMENSIONS', value: string(embeddingDimensions) }
-            { name: 'AZURE_SEARCH_ENDPOINT', value: 'https://${search.name}.search.windows.net' }
-            { name: 'AZURE_SEARCH_INDEX', value: 'itops-chunks' }
-            { name: 'DATA_DIR', value: '/app/data' }
-            { name: 'WEB_DIST_DIR', value: '/app/web/dist' }
-            { name: 'RATE_LIMIT_PER_MINUTE', value: '30' }
-            { name: 'DAILY_REQUEST_CAP', value: '2000' }
-            { name: 'MAX_OUTPUT_TOKENS', value: '400' }
-            { name: 'LANGSMITH_TRACING', value: 'true' }
-            { name: 'LANGSMITH_PROJECT', value: 'itops-rag' }
-            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
-            { name: 'API_KEY', secretRef: 'api-key' }
-            { name: 'LANGSMITH_API_KEY', secretRef: 'langsmith-api-key' }
-          ]
+          env: concat(
+            [
+              { name: 'ENVIRONMENT', value: 'azure' }
+              { name: 'RETRIEVER_BACKEND', value: 'azure' }
+              { name: 'EMBEDDING_BACKEND', value: 'azure' }
+              { name: 'GENERATOR_BACKEND', value: 'azure_openai' }
+              { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
+              { name: 'AZURE_CHAT_DEPLOYMENT', value: chatDeployment }
+              { name: 'AZURE_EMBEDDING_DEPLOYMENT', value: embeddingDeployment }
+              { name: 'AZURE_EMBEDDING_DIMENSIONS', value: string(embeddingDimensions) }
+              { name: 'AZURE_SEARCH_ENDPOINT', value: 'https://${search.name}.search.windows.net' }
+              { name: 'AZURE_SEARCH_INDEX', value: 'itops-chunks' }
+              { name: 'DATA_DIR', value: '/app/data' }
+              { name: 'WEB_DIST_DIR', value: '/app/web/dist' }
+              { name: 'RATE_LIMIT_PER_MINUTE', value: '30' }
+              { name: 'DAILY_REQUEST_CAP', value: '2000' }
+              { name: 'MAX_OUTPUT_TOKENS', value: '400' }
+              { name: 'LANGSMITH_TRACING', value: hasLangsmith ? 'true' : 'false' }
+              { name: 'LANGSMITH_PROJECT', value: 'itops-rag' }
+              { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
+            ],
+            hasApiKey ? [{ name: 'API_KEY', secretRef: 'api-key' }] : [],
+            hasLangsmith ? [{ name: 'LANGSMITH_API_KEY', secretRef: 'langsmith-api-key' }] : []
+          )
           probes: [
             {
               type: 'Liveness'
@@ -274,13 +283,17 @@ resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
         enabled: true
         operator: 'GreaterThan'
         threshold: 125
-        contactEmails: []
+        contactRoles: [
+          'Owner'
+        ]
       }
       critical: {
         enabled: true
         operator: 'GreaterThan'
         threshold: 200
-        contactEmails: []
+        contactRoles: [
+          'Owner'
+        ]
       }
     }
   }

@@ -12,11 +12,17 @@ are US-dollar list prices. They are estimates, not quotes.
 |---|---|---|
 | Azure AI Search | **Free** tier | 50 MB, 3 indexes, 1 per subscription. Enough for 3,600 chunks. |
 | Azure OpenAI embeddings | `text-embedding-3-small` @ 512 dims | Cheapest embedding model; 512 dims keeps the index small. |
-| Azure OpenAI chat | `gpt-4o-mini` | Best availability and price for grounded extraction. |
+| Azure OpenAI chat | `gpt-5-mini` | `gpt-4o-mini` is deprecated and cannot be deployed. |
 | Container Apps | Consumption, 0.5 vCPU / 1 GiB, `minReplicas=0`, `maxReplicas=2` | Scales to zero; free grant covers light use. |
 | Container Registry | **GHCR** (public) | Avoids ACR's ~$5/month. |
 | Log Analytics | 1 GB/day cap | Free grant is 5 GB/month. |
 | LangSmith | Developer free tier | 5,000 traces/month. |
+
+> **Cost impact of the model change:** `gpt-5-mini` is a reasoning model, so
+> each answer also bills hidden reasoning tokens. Measured on the live
+> deployment, one `/ask` used **368 prompt + 164 completion tokens** (532 total)
+> and took **~2.7 s**. At 1,000 queries/month this is still well under $1, but
+> it is more expensive per answer than the original `gpt-4o-mini` estimate.
 
 ## Unit prices used
 
@@ -27,8 +33,8 @@ are US-dollar list prices. They are estimates, not quotes.
 | Container Apps requests | $0.40 / million (first 2M free) |
 | Container Apps free grant | 180,000 vCPU-s, 360,000 GiB-s, 2M requests / month |
 | `text-embedding-3-small` | $0.000022 / 1K tokens |
-| `gpt-4o-mini` input | $0.15 / 1M tokens |
-| `gpt-4o-mini` output | $0.60 / 1M tokens |
+| `gpt-5-mini` input | $0.25 / 1M tokens |
+| `gpt-5-mini` output | $2.00 / 1M tokens |
 | Azure AI Search Free | $0.00 |
 | Log Analytics | 5 GB/month free, then ~$2.76/GB |
 
@@ -60,26 +66,29 @@ evidence + system prompt + answer).
 | Azure AI Search | Free tier | **$0.00** |
 | Embeddings (one-time index) | 124K tokens × $0.000022/1K | **$0.003** |
 | Embeddings (queries) | 1,000 × 20 tokens × $0.000022/1K | **$0.0004** |
-| Chat input | 1,000 × 1,500 tok × $0.15/1M | **$0.23** |
-| Chat output | 1,000 × 150 tok × $0.60/1M | **$0.09** |
+| Chat input | 1,000 × 368 tok × $0.25/1M | **$0.09** |
+| Chat output (incl. reasoning) | 1,000 × 164 tok × $2.00/1M | **$0.33** |
 | Container Apps | ~5,000 vCPU-s, ~10,000 GiB-s — inside free grant | **$0.00** |
 | Log Analytics | < 1 GB/month — inside free grant | **$0.00** |
 | Container Registry | GHCR public | **$0.00** |
 | LangSmith | Free tier | **$0.00** |
-| **Total** | | **≈ $0.32** |
+| **Total** | | **≈ $0.42** |
+
+Token counts are measured from the live deployment, not assumed.
 
 ## Sensitivity
 
 | Scenario | Queries/month | Estimated cost |
 |---|---|---|
-| Light testing | 100 | ~$0.04 |
-| Normal development | 1,000 | ~$0.32 |
-| Heavy testing | 10,000 | ~$3.20 |
-| Stress test | 50,000 | ~$16.00 |
-| Worst case (all limits hit) | 60,000 (daily cap × 30) | ~$19.20 |
+| Light testing | 100 | ~$0.05 |
+| Normal development | 1,000 | ~$0.42 |
+| Heavy testing | 10,000 | ~$4.20 |
+| Stress test | 50,000 | ~$21.00 |
+| Worst case (all limits hit) | 60,000 (daily cap × 30) | ~$25.20 |
 
-Even at the daily request cap of 2,000/day for a full month, the estimate stays
-under the $20 target.
+> With `gpt-5-mini` the stress and worst-case scenarios now exceed the $20
+> target. The daily request cap (`DAILY_REQUEST_CAP=2000`) and the per-minute
+> rate limit are the controls that keep normal use far below it.
 
 ## Guardrails in place
 

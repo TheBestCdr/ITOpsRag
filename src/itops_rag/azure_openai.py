@@ -77,21 +77,47 @@ class AzureOpenAIEmbedder:
     def embed_texts(self, texts: list[str]) -> np.ndarray:
         """Embed a batch of texts, returning L2-normalized float32 vectors."""
         vectors: list[list[float]] = []
-        # The API caps a single request at 2048 inputs and 300K tokens.
-        batch_size = 256
+        # The API caps a single request at 2048 inputs and 300K tokens, but the
+        # binding limit in practice is the deployment's tokens-per-minute quota.
+        # Small batches plus retry/backoff keep indexing inside a low TPM tier.
+        batch_size = max(1, self.settings.embedding_batch_size)
         for start in range(0, len(texts), batch_size):
             batch = texts[start : start + batch_size]
-            response = self.client.embeddings.create(
-                model=self.settings.azure_embedding_deployment,
-                input=batch,
-                dimensions=self.settings.azure_embedding_dimensions,
-            )
+            response = self._embed_batch_with_retry(batch)
             vectors.extend(item.embedding for item in response.data)
 
         matrix = np.asarray(vectors, dtype=np.float32)
         norms = np.linalg.norm(matrix, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         return matrix / norms
+
+    def _embed_batch_with_retry(self, batch: list[str]):
+        """Call the embeddings API, backing off on 429 rate limits."""
+        import time
+
+        from openai import RateLimitError
+
+        attempts = self.settings.embedding_max_retries
+        delay = 5.0
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.client.embeddings.create(
+                    model=self.settings.azure_embedding_deployment,
+                    input=batch,
+                    dimensions=self.settings.azure_embedding_dimensions,
+                )
+            except RateLimitError:
+                if attempt == attempts:
+                    raise
+                logger.warning(
+                    "embedding rate limited (attempt %d/%d); sleeping %.0fs",
+                    attempt,
+                    attempts,
+                    delay,
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 60.0)
+        raise RuntimeError("unreachable")
 
     def embed_question(self, question: str) -> np.ndarray:
         return self.embed_texts([question])[0]

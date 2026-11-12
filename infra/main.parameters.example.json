@@ -12,7 +12,7 @@
       "value": "https://REPLACE_ME.openai.azure.com"
     },
     "chatDeployment": {
-      "value": "gpt-4o-mini"
+      "value": "gpt-5-mini"
     },
     "embeddingDeployment": {
       "value": "text-embedding-3-small"

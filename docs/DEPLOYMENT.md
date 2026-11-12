@@ -1,5 +1,21 @@
 # Deployment
 
+## Deployed environment (2026-11-12)
+
+| Item | Value |
+|---|---|
+| Subscription | Visual Studio Professional (`5a9798a6-3140-4e0b-8d97-efe52f9fa6f4`) |
+| Resource group | `rg-itops-rag` (eastus) |
+| Public URL | https://ca-itops-67f340.kindbush-cbd7607a.eastus.azurecontainerapps.io |
+| Image | `ghcr.io/thebestcdr/itopsrag:905d7f2e8638141a4a0a958e983db1a92bc8898f` |
+| Chat model | `gpt-5-mini` (2025-08-07, GlobalStandard) |
+| Embedding model | `text-embedding-3-small` (v1, 512 dims) |
+| Index | `itops-chunks` — 3,600 chunks / 1,200 documents |
+
+> **Model note:** `gpt-4o-mini` (2024-07-18) is deprecated and cannot be
+> deployed. `gpt-5-mini` is used instead. Because it is a reasoning model, the
+> client sends `max_completion_tokens` rather than `temperature`/`max_tokens`.
+
 ## Prerequisites
 
 | Requirement | How to verify |
@@ -7,11 +23,31 @@
 | Azure CLI, logged in | `az account show -o table` |
 | VS Professional subscription selected | `az account show --query name` |
 | **Spending limit enabled** | Portal → Cost Management → Budgets |
-| Azure OpenAI resource with `gpt-4o-mini` and `text-embedding-3-small` | `az cognitiveservices account deployment list -n <name> -g <rg>` |
+| Azure OpenAI resource with a chat and an embedding deployment | `az cognitiveservices account deployment list -n <name> -g <rg>` |
 | Python 3.11+ with the package installed | `python -c "import itops_rag"` |
 
 > **Before you start:** confirm the subscription spending limit is enabled. This
 > project targets **≤ $20/month** and never upgrades a free tier.
+
+### Creating the Azure OpenAI resource
+
+The Bicep template expects an existing Azure OpenAI resource. Create one with
+the two required deployments:
+
+```powershell
+az cognitiveservices account create -n oai-itops-rag -g rg-itops-rag `
+  --location eastus --kind OpenAI --sku S0 --custom-domain oai-itops-rag --yes
+
+# Embeddings (Standard). Raise capacity if you hit 429s while indexing.
+az cognitiveservices account deployment create -n oai-itops-rag -g rg-itops-rag `
+  --deployment-name text-embedding-3-small --model-name text-embedding-3-small `
+  --model-version 1 --model-format OpenAI --sku-name Standard --sku-capacity 350
+
+# Chat. gpt-5-mini requires the GlobalStandard SKU.
+az cognitiveservices account deployment create -n oai-itops-rag -g rg-itops-rag `
+  --deployment-name gpt-5-mini --model-name gpt-5-mini `
+  --model-version 2025-08-07 --model-format OpenAI --sku-name GlobalStandard --sku-capacity 10
+```
 
 ## Windows PowerShell (recommended)
 
@@ -26,9 +62,11 @@ az account show -o table
 
 # Deploy
 .\infra\deploy.ps1 `
-    -AzureOpenAiEndpoint "https://<your-resource>.openai.azure.com" `
-    -OpenAiResourceName "<your-openai-resource>" `
-    -OpenAiResourceGroup "<your-openai-rg>" `
+    -AzureOpenAiEndpoint "https://oai-itops-rag.openai.azure.com" `
+    -OpenAiResourceName "oai-itops-rag" `
+    -OpenAiResourceGroup "rg-itops-rag" `
+    -ChatDeployment "gpt-5-mini" `
+    -Image "ghcr.io/thebestcdr/itopsrag:<full-40-char-sha>" `
     -ApiKey "<a-strong-random-key>"
 ```
 
@@ -44,12 +82,16 @@ Then index the corpus:
 ```powershell
 .\infra\index.ps1 `
     -SearchEndpoint "https://srch-itops-<suffix>.search.windows.net" `
-    -OpenAiEndpoint "https://<your-resource>.openai.azure.com" `
+    -OpenAiEndpoint "https://oai-itops-rag.openai.azure.com" `
     -DataDir "C:\ProjPlayGround\ICS_DL\Caproj\agent-eval-part-i-grounded-rag-benchmark" `
     -Recreate
 ```
 
 Expected: `Indexed 3600 chunks into 'itops-chunks'.`
+
+> `index.ps1` uses the project `.venv` when present and reads the search admin
+> key automatically, because a developer's `az login` identity usually lacks the
+> data-plane write role.
 
 ## Bash (Linux / macOS / WSL)
 
@@ -83,12 +125,17 @@ credentials.
 | Resource | Name | Tier |
 |---|---|---|
 | Resource group | `rg-itops-rag` | — |
+| Azure OpenAI | `oai-itops-rag-<suffix>` | S0 (pay-per-token) |
 | Azure AI Search | `srch-itops-<suffix>` | **Free** (50 MB) |
 | Container Apps environment | `cae-itops-<suffix>` | Consumption |
 | Container App | `ca-itops-<suffix>` | min=0, max=2 |
 | Log Analytics | `log-itops-<suffix>` | 1 GB/day cap |
 | Application Insights | `appi-itops-<suffix>` | — |
 | Budget | `budget-itops-<suffix>` | alerts at $25 / $40 |
+
+The search service is created with `authOptions.aadOrApiKey` so the app's
+managed identity can query it. Without that setting the service is
+`apiKeyOnly` and the app receives `403 Forbidden`.
 
 ## Verify
 
@@ -178,9 +225,14 @@ Or on bash: `bash infra/teardown.sh`
 | Symptom | Cause | Fix |
 |---|---|---|
 | `/readyz` returns 500 | `DATA_DIR` missing or corpus incomplete | Mount the data or set `DATA_DIR` |
+| `/readyz` shows `index_error: Forbidden` | Search service is `apiKeyOnly` | Enable `authOptions.aadOrApiKey` (Bicep does this) |
+| `/readyz` shows `index ... was not found` | Corpus not indexed yet | Run `infra/index.ps1` |
 | `/ask` returns 503 | `KILL_SWITCH=true` | Set `KILL_SWITCH=false` |
 | `/ask` returns 401 | `API_KEY` set but header missing | Send `X-API-Key` |
 | `/ask` returns 429 | Rate limit or daily cap | Wait, or raise the limits |
+| `/ask` returns 500 `Unsupported parameter: max_tokens` | Reasoning model deployed | Use the current image (sends `max_completion_tokens`) |
 | Answers always refuse | Index empty or embeddings mismatched | Re-run the indexer; check dimensions |
+| Indexer `429` | Embedding TPM quota too low | Raise deployment capacity or lower `EMBEDDING_BATCH_SIZE` |
+| Indexer `403` on upload | Identity lacks data-plane write | `index.ps1` uses the admin key automatically |
 | Container fails to start | Image pull failure | Make the GHCR package public, or pass registry credentials |
 | Cold start > 30 s | Image too large | Confirm torch is not installed in the image |

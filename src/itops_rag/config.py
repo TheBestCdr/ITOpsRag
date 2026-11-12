@@ -53,12 +53,17 @@ class Settings(BaseSettings):
     local_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     azure_embedding_deployment: str = "text-embedding-3-small"
     azure_embedding_dimensions: int = 512
+    # Texts per embeddings request. Kept small so a low tokens-per-minute quota
+    # (e.g. 10K TPM) is not exceeded; raise it for higher-throughput tiers.
+    embedding_batch_size: int = 32
+    embedding_max_retries: int = 8
 
     # ---- Answer generation ----
     # "extractive" -> notebook behaviour (no LLM, always available)
     # "azure_openai" -> grounded LLM answer with citations
     generator_backend: str = "extractive"
-    azure_chat_deployment: str = "gpt-4o-mini"
+    # gpt-4o-mini is deprecated; gpt-5-mini is the current small chat model.
+    azure_chat_deployment: str = "gpt-5-mini"
     max_output_tokens: int = 400
     request_timeout_seconds: float = 30.0
     max_retries: int = 2

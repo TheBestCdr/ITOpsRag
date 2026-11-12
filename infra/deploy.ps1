@@ -34,7 +34,7 @@ param(
     [string]$Location = "eastus",
     [string]$NameSuffix = "",
     [string]$Image = "ghcr.io/thebestcdr/itopsrag:latest",
-    [string]$ChatDeployment = "gpt-4o-mini",
+    [string]$ChatDeployment = "gpt-5-mini",
     [string]$EmbeddingDeployment = "text-embedding-3-small",
     [int]$EmbeddingDimensions = 512,
 
@@ -117,14 +117,20 @@ if (-not $SkipChecks) {
 
     Write-Step "Checking Azure AI Search Free availability"
 
-    $freeServices = az search service list --query "[?sku.name=='free'].name" -o tsv 2>$null
+    # `az search service list` requires --resource-group on current CLI versions,
+    # so query the subscription-wide resource list instead. Exclude our own
+    # service (from a previous run) so re-deploys are not flagged.
+    $ownSearch = "srch-itops-$NameSuffix"
+    $freeServices = @(az resource list --resource-type "Microsoft.Search/searchServices" `
+        --query "[?sku.name=='free'].name" -o tsv 2>$null) |
+        Where-Object { $_ -and $_ -ne $ownSearch }
     if ($freeServices) {
-        Write-Warn "A Free search service already exists: $freeServices"
+        Write-Warn "A Free search service already exists: $($freeServices -join ', ')"
         Write-Warn "Only ONE Free service is allowed per subscription."
         Write-Warn "Delete it first, or the deployment will fail."
     }
     else {
-        Write-Ok "No Free search service exists; one can be created."
+        Write-Ok "No conflicting Free search service exists; '$ownSearch' can be created or updated."
     }
 }
 
@@ -177,8 +183,8 @@ if ($WhatIf) {
     return
 }
 
-$result = az @deployArgs | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) {
+$result = az @deployArgs 2>$null | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $result) {
     throw "Deployment failed. Check the Azure portal for details."
 }
 

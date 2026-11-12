@@ -25,7 +25,7 @@ flowchart TB
 
     subgraph Azure[Azure services]
         SRCH[(Azure AI Search<br/>Free tier<br/>3,600 chunks)]
-        AOAI[Azure OpenAI<br/>text-embedding-3-small<br/>gpt-4o-mini]
+        AOAI[Azure OpenAI<br/>text-embedding-3-small<br/>gpt-5-mini]
         AI[Application Insights]
         LA[Log Analytics<br/>1 GB/day cap]
     end

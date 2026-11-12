@@ -107,7 +107,7 @@ flowchart LR
     A --> R
     R --> S[(Azure AI Search Free<br/>3,600 chunks)]
     R --> O[Azure OpenAI<br/>text-embedding-3-small]
-    G --> O2[Azure OpenAI<br/>gpt-4o-mini]
+    G --> O2[Azure OpenAI<br/>gpt-5-mini]
     A -.traces.-> LS[LangSmith]
     A -.OTLP.-> AI[App Insights]
 ```
