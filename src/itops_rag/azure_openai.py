@@ -116,6 +116,22 @@ class AzureOpenAIGenerator:
             lines.append(f"[{i}] ({chunk.chunk_id}) {chunk.title}\n{chunk.text}")
         return "\n\n".join(lines)
 
+    def _completion_params(self) -> dict:
+        """Chat parameters adapted to the deployed model.
+
+        Reasoning models (``gpt-5*`` and the ``o1``/``o3``/``o4`` families)
+        reject ``temperature`` and ``max_tokens``; they require
+        ``max_completion_tokens`` with a budget large enough to cover the hidden
+        reasoning tokens before the visible answer. Non-reasoning models keep
+        the original deterministic settings.
+        """
+        deployment = (self.settings.azure_chat_deployment or "").lower()
+        if deployment.startswith(("gpt-5", "o1", "o3", "o4")):
+            # Reasoning tokens count against this budget, so keep a floor well
+            # above max_output_tokens to avoid truncating the answer.
+            return {"max_completion_tokens": max(self.settings.max_output_tokens, 4000)}
+        return {"temperature": 0, "max_tokens": self.settings.max_output_tokens}
+
     def generate(
         self,
         question: str,
@@ -137,8 +153,7 @@ class AzureOpenAIGenerator:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0,
-            max_tokens=self.settings.max_output_tokens,
+            **self._completion_params(),
         )
 
         text = (response.choices[0].message.content or "").strip()

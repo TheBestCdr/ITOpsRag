@@ -116,3 +116,21 @@ def test_generator_sends_evidence_and_question():
     assert "what is the target?" in user_message
     assert call["temperature"] == 0
     assert call["max_tokens"] == 200
+
+
+def test_generator_uses_reasoning_params_for_gpt5():
+    """Reasoning models reject temperature/max_tokens and need max_completion_tokens."""
+    client = FakeClient("Answer [1].")
+    settings = Settings(
+        min_similarity=0.35,
+        max_output_tokens=200,
+        azure_chat_deployment="gpt-5-mini",
+    )
+    generator = AzureOpenAIGenerator(settings, client=client)
+
+    generator.generate("q", [_chunk("doc_0001_chunk_1", "10 minutes")], 0.9)
+
+    call = client.chat.completions.calls[0]
+    assert "temperature" not in call
+    assert "max_tokens" not in call
+    assert call["max_completion_tokens"] >= 200
