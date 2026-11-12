@@ -32,11 +32,13 @@ class AskResult:
     usage: dict[str, int] = field(default_factory=dict)
 
 
-def build_retriever(settings: Settings, corpus: Corpus) -> Retriever:
+def build_retriever(settings: Settings, corpus: Corpus | None) -> Retriever:
     """Construct the configured retrieval backend."""
     backend = settings.retriever_backend.lower()
 
     if backend == "local":
+        if corpus is None:
+            raise ValueError("the local retriever needs the corpus loaded")
         return LocalRetriever(corpus.chunks, settings)
 
     if backend == "azure":
@@ -70,7 +72,7 @@ class RagService:
     def __init__(
         self,
         settings: Settings,
-        corpus: Corpus,
+        corpus: Corpus | None,
         retriever: Retriever | None = None,
         generator: Generator | None = None,
     ) -> None:
@@ -160,10 +162,36 @@ class RagService:
     # ---- readiness --------------------------------------------------
 
     def health(self) -> dict:
-        return {
+        """Report corpus size and configured backends.
+
+        When the corpus is not mounted (the Azure deployment reads chunks from
+        Azure AI Search instead), report the expected corpus size and the live
+        index document count.
+        """
+        if self.corpus is not None:
+            documents = int(self.corpus.chunks["doc_id"].nunique())
+            chunks = int(len(self.corpus.chunks))
+        else:
+            documents = self.settings.expected_docs
+            chunks = self.settings.expected_chunks
+
+        info = {
             "status": "ok",
-            "documents": int(self.corpus.chunks["doc_id"].nunique()),
-            "chunks": int(len(self.corpus.chunks)),
+            "documents": documents,
+            "chunks": chunks,
             "retriever_backend": self.settings.retriever_backend,
             "generator_backend": self.settings.generator_backend,
+            "corpus_loaded": self.corpus is not None,
         }
+
+        # For the Azure backend, report what is actually in the index.
+        if self.settings.retriever_backend.lower() == "azure":
+            try:
+                from .azure_search import index_document_count
+
+                info["index_documents"] = index_document_count(self.settings)
+            except Exception as exc:  # pragma: no cover - depends on Azure
+                info["index_documents"] = None
+                info["index_error"] = str(exc)[:200]
+
+        return info

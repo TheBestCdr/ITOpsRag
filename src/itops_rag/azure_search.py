@@ -161,6 +161,11 @@ def corpus_fingerprint(chunks: pd.DataFrame) -> str:
     return digest.hexdigest()[:16]
 
 
+def index_document_count(settings: Settings) -> int:
+    """Number of documents currently in the search index."""
+    return int(_search_client(settings).get_document_count())
+
+
 class AzureSearchRetriever:
     """Retrieval against Azure AI Search (BM25, vector, and hybrid)."""
 

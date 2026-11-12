@@ -133,7 +133,12 @@ def create_app(settings: Settings | None = None, service: RagService | None = No
 
     def get_service() -> RagService:
         if state["service"] is None:
-            corpus = load_corpus(settings)
+            # The local retriever needs the corpus in memory. The Azure backend
+            # reads chunks from Azure AI Search, so the corpus is optional there
+            # and the container image does not ship the Kaggle data.
+            corpus = None
+            if settings.retriever_backend.lower() == "local":
+                corpus = load_corpus(settings)
             state["service"] = RagService(settings, corpus)
         return state["service"]  # type: ignore[return-value]
 
