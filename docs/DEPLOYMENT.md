@@ -154,6 +154,16 @@ curl.exe -X POST "$url/ask" `
 
 The first request after idle triggers a cold start (allow ~10–20 s).
 
+### Using the web UI
+
+When `API_KEY` is set, the browser must send `X-API-Key` too. The UI has an
+**API key** field above the question box; paste the key there once. It is kept in
+`sessionStorage` (cleared when the tab closes) and sent on `/ask`, `/search`, and
+`/feedback`. Without it those calls return `401 Invalid or missing X-API-Key`.
+
+`/healthz` and `/readyz` are unauthenticated, so the status bar works without a
+key.
+
 ## CI/CD with OIDC
 
 The deploy workflow uses federated credentials, not stored secrets.
