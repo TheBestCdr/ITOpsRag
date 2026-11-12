@@ -156,13 +156,41 @@ The first request after idle triggers a cold start (allow ~10–20 s).
 
 ### Using the web UI
 
-When `API_KEY` is set, the browser must send `X-API-Key` too. The UI has an
-**API key** field above the question box; paste the key there once. It is kept in
-`sessionStorage` (cleared when the tab closes) and sent on `/ask`, `/search`, and
-`/feedback`. Without it those calls return `401 Invalid or missing X-API-Key`.
+The shared UI is currently **unauthenticated**: open the URL and ask a question,
+no credentials required. This is a **temporary** arrangement for the shared demo
+(see [Unauthenticated access](#unauthenticated-access-temporary) below).
 
-`/healthz` and `/readyz` are unauthenticated, so the status bar works without a
-key.
+### Unauthenticated access (temporary)
+
+`API_KEY` is intentionally **not set** on the deployed container app, so
+`/ask`, `/search`, and `/feedback` accept anonymous requests. The auth code is
+still present and is enabled automatically whenever `API_KEY` is set — nothing
+was removed from the backend.
+
+**Why this is acceptable for now**
+
+- No secret is shipped to the browser. Azure OpenAI and Azure AI Search are
+  reached with the container app's **managed identity**; the OpenAI key is never
+  in the image, the frontend, or an env var.
+- Abuse is still bounded by the per-IP rate limit (`RATE_LIMIT_PER_MINUTE=30`),
+  the daily cap (`DAILY_REQUEST_CAP=2000`), and the `$20` budget alerts.
+- The corpus is public Kaggle data, so anonymous reads expose nothing private.
+
+**Before this becomes a permanent public deployment, restore auth:**
+
+```powershell
+# 1. Generate a key and store it as a Container Apps secret
+$key = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 40 | ForEach-Object {[char]$_})
+az containerapp secret set -n ca-itops-67f340 -g rg-itops-rag --secrets "api-key=$key"
+
+# 2. Point API_KEY at the secret
+az containerapp update -n ca-itops-67f340 -g rg-itops-rag `
+  --set-env-vars "API_KEY=secretref:api-key"
+```
+
+Callers must then send `X-API-Key`. For a browser UI, prefer putting the app
+behind Entra ID (Container Apps built-in auth) instead of distributing a shared
+key to users.
 
 ## CI/CD with OIDC
 

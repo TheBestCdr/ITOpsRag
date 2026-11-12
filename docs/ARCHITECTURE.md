@@ -146,3 +146,15 @@ makes cost regressions visible in review.
   probes working.
 - The container runs as a non-root user (uid 10001).
 - Kaggle data is excluded from Git by `.gitignore` and by a CI check.
+
+### Current deployment: unauthenticated (temporary)
+
+The shared demo runs with `API_KEY` **unset**, so the UI works without
+credentials. This is deliberate and temporary:
+
+- The auth code path is intact and activates as soon as `API_KEY` is set.
+- No secret reaches the browser. Model and search access use managed identity,
+  so removing the API key does not expose any Azure credential.
+- Rate limiting, the daily cap, and budget alerts remain the abuse controls.
+- To restore auth, set the `api-key` secret and `API_KEY=secretref:api-key`
+  (see [`DEPLOYMENT.md`](DEPLOYMENT.md#unauthenticated-access-temporary)).
